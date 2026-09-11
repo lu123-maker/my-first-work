@@ -1,199 +1,140 @@
-% LaTeX model section for C题 (Problems 1 & 2)
-% Save this file as model_section.tex and convert to Word with Pandoc:
-%   pandoc model_section.tex -s -o model_section.docx
-% (Pandoc will convert LaTeX math to Word equations.)
+% model_section.tex
+% 用 XeLaTeX 在 Overleaf 上编译，然后菜单 Export -> Word (.docx)
+\documentclass[12pt]{article}
+\usepackage{fontspec}    % XeLaTeX 字体支持
+\usepackage{xeCJK}       % 支持中文（无需手动指定系统字体）
+\usepackage{amsmath,amssymb}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\geometry{a4paper, margin=2.5cm}
 
-\section{模型建立}
-本节给出题目第1问与第2问的数学模型。为描述简洁，先给出符号说明，然后分别建立问题1（确定性日内计划）与问题2（含紧急购电）的线性规划模型，并给出实现上的若干说明。
+\title{模型建立与求解}
+\author{作者姓名}
+\date{\today}
 
-\subsection{符号说明}
-为表示简洁，记：
+\begin{document}
+\maketitle
+
+\section{符号说明}
+为便于表述，统一符号与单位如下（功率单位为 kW，能量单位为 kWh，价格单位为 元/kWh）：
+
+\begin{description}
+  \item[$T$] 天内时间步数，$T=144$（10 分钟步长）；$\Delta=\dfrac{1}{6}$ 小时。
+  \item[$p_t$] 时段 $t$ 的电价（元/kWh）。
+  \item[$L_t$] 时段 $t$ 的负荷功率（kW）；对应能量 $L_t^E=L_t\Delta$（kWh）。
+  \item[$\widehat{PV}_t$] 时段 $t$ 的光伏预测功率（kW）；对应能量 $PV_t^E=\widehat{PV}_t\Delta$（kWh）。
+  \item[$PV_t^{\mathrm{act}}$] 时段 $t$ 的光伏实际功率（kW）；对应能量 $PV_t^{\mathrm{act},E}=PV_t^{\mathrm{act}}\Delta$（kWh）。
+  \item[$E_0$] 初始储能电量（kWh），题设 $E_0=6000$。
+  \item[$E_{\min},E_{\max}$] 储能电量上下界（kWh），题设 $E_{\min}=1200,\ E_{\max}=10800$。
+  \item[$P_{\mathrm{ch}}^{\max},P_{\mathrm{dis}}^{\max}$] 充/放电功率上界（kW），题设均为 $5000$。
+  \item[$\eta_{\mathrm{c}},\eta_{\mathrm{d}}$] 充/放电效率，满足 $\eta_{\mathrm{c}}\eta_{\mathrm{d}}=\eta_{\mathrm{rt}}=0.9$（可取 $\eta_{\mathrm{c}}=\eta_{\mathrm{d}}=\sqrt{0.9}$）。
+  \item[$G^p_t$] 计划购电量（kWh），在 0:00 规划得到并于对应时段从外网取电。
+  \item[$G^d_t$] ``充电宝'' 服务/折扣通道购电量（kWh），单位电价为 $0.9\,p_t$（即打九折），可选并受最大可用量 $G^{d,\max}_t$ 限制。
+  \item[$G^e_t$] 紧急/额外购电量（kWh），单位电价为 $5\,p_t$（高价惩罚，紧急补购）。
+\end{description}
+
+\subsection{决策变量（汇总）}
 \begin{itemize}
-  \item $T=144$：一天的时间步数（10 分钟步长），$\Delta=\tfrac{1}{6}$ 小时。
-  \item $p_t$：时段 $t$ 的电价（元/kWh）。
-  \item $L_t$：时段 $t$ 的负荷功率（kW），对应能量 $L_t^E=L_t\Delta$（kWh）。
-  \item $\widehat{PV}_t$：时段 $t$ 的光伏预测功率（kW），对应能量 $PV_t^E=\widehat{PV}_t\Delta$（kWh）。
-  \item $E_0$：初始储能能量（kWh），题设 $E_0=6000$。
-  \item $E_{\min},E_{\max}$：储能能量上下界，题设 $E_{\min}=1200,\ E_{\max}=10800$（kWh）。
-  \item $P^{\max}_{\mathrm{ch}},P^{\max}_{\mathrm{dis}}$：充/放电功率上界（kW），题设均为 $5000$。
-  \item $\eta_{\mathrm{c}},\eta_{\mathrm{d}}$：充放电效率，满足 $\eta_{\mathrm{c}}\eta_{\mathrm{d}}=\eta_{\mathrm{rt}}=0.9$（可取 $\eta_{\mathrm{c}}=\eta_{\mathrm{d}}=\sqrt{0.9}$）。
-\end{itemize}
-
-决策变量：
-\begin{itemize}
-  \item $G^{\mathrm{p}}_t\ge0$：时段 $t$ 的计划购电量（kWh）。
+  \item $G^p_t\ge0$：时段 $t$ 的计划购电量（kWh）。
+  \item $G^d_t\ge0$：时段 $t$ 的充电宝购电量（kWh），单价为 $0.9p_t$，上限 $G^{d,\max}_t$（可设为常数或时间序列）。
+  \item $G^e_t\ge0$：时段 $t$ 的紧急购电量（kWh），单价为 $5p_t$。
   \item $P_{\mathrm{ch},t}\ge0,\ P_{\mathrm{dis},t}\ge0$：时段 $t$ 的充/放电功率（kW），对应能量为 $P\Delta$（kWh）。
   \item $E_t$：时段 $t$ 末的储能电量（kWh）。
-  \item （问题2）$G^{\mathrm{e}}_t\ge0$：时段 $t$ 的紧急购电量（kWh）。
 \end{itemize}
 
-\subsection{问题1：确定性日内计划（线性规划）}
-在 0:00 已知当日电价 $p_t$, 负荷 $L_t$ 与光伏预测 $\widehat{PV}_t$ 的情形下，求解以下线性规划以获得全天的计划购电和储能调度：
+\section{问题1：确定性日内计划（模型建立与求解）}
+问题1 与此前一致：在 0:00 已知预测数据 $\{p_t, L_t, \widehat{PV}_t\}$，制定当天的计划购电 $\{G^p_t\}$ 与储能充放电策略，最小化计划购电费用（不含折扣/紧急购电的事后成本）。本小节保持与竞赛题目一致的线性规划表述，供方法 B 事后仿真使用。下面给出模型与矩阵化求解提示。
 
-\paragraph{目标函数}
+\paragraph{目标函数（问题1，规划成本）}
 \begin{equation}
-\min_{G^{\mathrm{p}},P_{\mathrm{ch}},P_{\mathrm{dis}},E}\quad
-J_1 \;=\; \sum_{t=1}^{T} p_t\,G^{\mathrm{p}}_t.
-\label{eq:obj1}
+\min_{G^p,P_{\mathrm{ch}},P_{\mathrm{dis}},E}\; J_1 \;=\; \sum_{t=1}^{T} p_t\,G^p_t.
 \end{equation}
 
 \paragraph{约束}
-\begin{align}
-&\text{(能量平衡)}\qquad
-G^{\mathrm{p}}_t + P_{\mathrm{dis},t}\Delta + PV_t^E
-= L_t^E + P_{\mathrm{ch},t}\Delta,\quad \forall t, \label{eq:balance1}\\[4pt]
-&\text{(储能动力学)}\qquad
-E_{t} = E_{t-1} + \eta_{\mathrm{c}}(P_{\mathrm{ch},t-1}\Delta)
-- \frac{1}{\eta_{\mathrm{d}}}(P_{\mathrm{dis},t-1}\Delta),\ \forall t,
-\label{eq:energy1}\\[4pt]
-&\text{(容量与功率界)}\qquad E_{\min}\le E_t\le E_{\max},\ 
-0\le P_{\mathrm{ch},t}\le P^{\max}_{\mathrm{ch}},\ 
-0\le P_{\mathrm{dis},t}\le P^{\max}_{\mathrm{dis}},\ \forall t,
-\label{eq:bounds1}\\[4pt]
-&\text{(非负性)}\qquad G^{\mathrm{p}}_t\ge0,\ \forall t,\\[4pt]
-&\text{(日终电量约束)}\qquad E_T = E_0. \label{eq:terminal1}
-\end{align}
+\begin{enumerate}
+  \item 能量平衡（使用预测光伏）：
+  \begin{equation}
+  G^p_t + P_{\mathrm{dis},t}\Delta + PV_t^E = L_t^E + P_{\mathrm{ch},t}\Delta,\qquad t=1,\dots,T.
+  \end{equation}
+  \item 储能动力学：
+  \begin{equation}
+  E_t = E_{t-1} + \eta_{\mathrm{c}}(P_{\mathrm{ch},t-1}\Delta) - \frac{1}{\eta_{\mathrm{d}}}(P_{\mathrm{dis},t-1}\Delta),\qquad t=1,\dots,T.
+  \end{equation}
+  \item 边界条件：$E_{\min}\le E_t\le E_{\max}$；$0\le P_{\mathrm{ch},t}\le P_{\mathrm{ch}}^{\max}$；$0\le P_{\mathrm{dis},t}\le P_{\mathrm{dis}}^{\max}$。
+  \item 非负性与循环终止：$G^p_t\ge0$，且 $E_T=E_0$（题设要求）。
+\end{enumerate}
 
-备注：上述模型为线性规划（LP）。若需严格禁止同时充放电，可引入互斥二元变量 $u_t\in\{0,1\}$：
-\[ P_{\mathrm{ch},t}\le u_t P^{\max}_{\mathrm{ch}},\qquad
-P_{\mathrm{dis},t}\le (1-u_t)P^{\max}_{\mathrm{dis}},\]
-使问题成为混合整数线性规划（MILP）。为降低计算复杂度，通常可不引入二元变量（效率损失自会抑制同时充放电）。
+\paragraph{求解说明}
+将问题1 写为标准的线性规划 $\min f^\top x$ s.t. $A_{\mathrm{eq}}x=b_{\mathrm{eq}},\ lb\le x\le ub$，变量向量 $x$ 可按 $[G^p_{1:T},\; P_{\mathrm{ch},1:T},\; P_{\mathrm{dis},1:T},\; E_{1:T}]^\top$ 排列。推荐在 MATLAB 中使用 \texttt{linprog} 求解（或商用求解器）。问题1 的解 $G^p_t$ 将作为问题2 的输入（方法 B）。
 
-\subsection{问题2：含紧急购电的建模}
-允许在运行时发生紧急购电 $G^{\mathrm{e}}_t$（kWh），其电价为当时电价的 5 倍。可采用两种建模/分析思路：
+\section{问题2：包含四类供电来源的模型（完整规划与事后仿真）}
+本节给出考虑四类供电来源的建模与求解方法：
+\begin{enumerate}
+  \item 计划购电（$G^p_t$），在 0:00 规划得到并按计划购入；单价 $p_t$。
+  \item 光伏发电（预测或实际），$PV_t$，优先用于负荷/充电。
+  \item 充电宝/折扣通道购电（$G^d_t$），单价为 $0.9\,p_t$（打 9 折），可能有时变上限 $G^{d,\max}_t$。
+  \item 紧急/额外购电（$G^e_t$），单价为 $5\,p_t$，仅在不可用其他资源时发生。
+\end{enumerate}
 
-\paragraph{方法 A：在规划中同时考虑紧急购电}
-在规划阶段引入 $G^{\mathrm{e}}_t$ 并计入惩罚费用，目标：
+此处同时给出「规划内同时考虑充电宝和紧急购电」（方法 A）与「先规划后仿真、事后统计紧急与折扣购电量」（方法 B）的模型与求解建议。
+
+\subsection{方法 A：规划内同时考虑所有来源（扩展 LP）}
+在规划阶段把 $G^p_t,G^d_t,G^e_t$ 全部作为决策变量并计入目标函数，目标为规划期内总期望购电成本（采用预测 PV）：
 \begin{equation}
-\min\; J_2 \;=\; \sum_{t=1}^T \big( p_t\,G^{\mathrm{p}}_t + 5\,p_t\,G^{\mathrm{e}}_t \big).
+\min\; J_{2A} \;=\; \sum_{t=1}^T \big( p_t G^p_t + 0.9p_t G^d_t + 5p_t G^e_t \big).
 \label{eq:obj2A}
 \end{equation}
-并把能量平衡约束改为
+
+约束（每时段）：
 \begin{equation}
-G^{\mathrm{p}}_t + G^{\mathrm{e}}_t + P_{\mathrm{dis},t}\Delta + PV_t^E
-= L_t^E + P_{\mathrm{ch},t}\Delta,\quad \forall t,
-\label{eq:balance2A}
+G^p_t + G^d_t + G^e_t + P_{\mathrm{dis},t}\Delta + PV_t^E = L_t^E + P_{\mathrm{ch},t}\Delta,\qquad t=1,\dots,T.
+\label{eq:bal2A}
 \end{equation}
-其余约束与问题1 相同。
 
-方法 A 的优点是规划时显式权衡高价紧急购电代价，得到更稳健的计划；缺点是需对预测误差做假设（否则可能过/欠保守）。
+此外：
+\begin{align}
+&0 \le G^d_t \le G^{d,\max}_t,\qquad G^p_t\ge0,\qquad G^e_t\ge0,\nonumber\\
+&\text{储能动力学、容量与功率界同问题1。}
+\end{align}
 
-\paragraph{方法 B：规划与事后仿真分离（题目常用流程）}
-先按问题1 得到 $G^{\mathrm{p}}_t$（仅用预测求解），再用实际时间序列（附件中真实光伏 $PV_t^{\mathrm{act}}$ 与真实负荷）做逐时仿真，计算真实发生的紧急购电：
-\[
-\mathrm{deficit}_t
-= \big(L_t^{\mathrm{act}}\Delta + P_{\mathrm{ch},t}\Delta\big)
-- \big(G^{\mathrm{p}}_t + PV_t^{\mathrm{act}}\Delta + P_{\mathrm{dis},t}\Delta\big).
-\]
-若 $\mathrm{deficit}_t>0$，则有 $G^{\mathrm{e},\mathrm{act}}_t=\mathrm{deficit}_t$；否则 $G^{\mathrm{e},\mathrm{act}}_t=0$。事后总成本为
-\[
-\mathrm{Cost}^{\mathrm{act}}=\sum_t p_t\,G^{\mathrm{p}}_t + \sum_t 5p_t\,G^{\mathrm{e},\mathrm{act}}_t.
-\]
+\paragraph{说明}
+方法 A 的优点是规划阶段已权衡折扣通道与紧急购电成本，可能在总成本上更优；缺点是若对实际 PV 有较大不确定性，规划可能仍无法避免大量事后紧急购电。该模型仍为线性规划，可用 \texttt{linprog} 求解（变量向量包含 $G^p,G^d,G^e,P_{\mathrm{ch}},P_{\mathrm{dis}},E$）。
 
-\subsection{实现要点（数值计算与输出）}
+\subsection{方法 B：先规划（问题1）后仿真，统计事后购电}
+方法 B 更贴合 "制定计划 + 运行时补购" 的实际流程，步骤如下：
+\begin{enumerate}
+  \item 在 0:00 用问题1 求得计划购电 $G^p_t$（并可得到一套储能调度策略 $P_{\mathrm{ch},t},P_{\mathrm{dis},t}$），不在规划阶段使用 $G^d$ 或 $G^e$。
+  \item 在运行时（基于真实观测 $PV_t^{\mathrm{act}},L_t^{\mathrm{act}}$）按时序推进，对每个时段按优先级分配供电：
+  \begin{enumerate}
+    \item 优先使用光伏发电 $PV_t^{\mathrm{act}}$ 满足负荷或用于储能。
+    \item 若仍有供电缺口，优先使用计划购电 $G^p_t$（已订购）。
+    \item 若仍有缺口，则使用充电宝折扣通道 $G^d_t$（受上限 $G^{d,\max}_t$）；其费用按 $0.9p_t$ 计。
+    \item 若仍有缺口，则以紧急价格购电 $G^e_t$（单价 $5p_t$）。
+  \end{enumerate}
+  \item 在仿真中，每时段计算实际发生的折扣购电 $G^{d,\mathrm{act}}_t$ 与紧急购电 $G^{e,\mathrm{act}}_t$，并记录其费用。事后总费用为：
+  \begin{equation}
+  \mathrm{Cost}^{\mathrm{act}} = \sum_{t=1}^T p_t G^p_t + \sum_{t=1}^T 0.9p_t G^{d,\mathrm{act}}_t + \sum_{t=1}^T 5p_t G^{e,\mathrm{act}}_t.
+  \end{equation}
+\end{enumerate}
+
+\paragraph{逐时仿真计算流程（伪代码）}
+\begin{enumerate}
+  \item 读取 $G^p_t$（规划结果）、$P_{\mathrm{ch},t},P_{\mathrm{dis},t}$（若固定）、以及真实时序 $PV_t^{\mathrm{act}},L_t^{\mathrm{act}}$。
+  \item 对每个时段 t：
+  \begin{itemize}
+    \item 计算需求能量 $D_t = L_t^{\mathrm{act}}\Delta + P_{\mathrm{ch},t}\Delta$（若按某策略充电）。
+    \item 可用能量先为 $A_t = PV_t^{\mathrm{act}}\Delta + G^p_t + P_{\mathrm{dis},t}\Delta$（计划购电视为可用）。
+    \item 若 $A_t\ge D_t$，则 $G^{d,\mathrm{act}}_t=0,\ G^{e,\mathrm{act}}_t=0$，并按规则更新 $E_t$。
+    \item 否则令 $\mathrm{deficit}=D_t-A_t$。先从折扣通道取 $G^{d,\mathrm{act}}_t=\min(\mathrm{deficit},G^{d,\max}_t)$，若仍有不足，用紧急购电 $G^{e,\mathrm{act}}_t=\mathrm{deficit}-G^{d,\mathrm{act}}_t$。
+  \end{itemize}
+\end{enumerate}
+
+\subsection{实现建议与输出}
 \begin{itemize}
-  \item 变量与单位：注意功率（kW）与能量（kWh）之间以 $\Delta$ 做换算；在构造线性规划时通常把充/放电以功率变量表示，但在能量平衡及储能动态中乘以 $\Delta$。
-  \item 求解器：上述模型为 LP（若不引入二元互斥变量），可用 MATLAB 的 \texttt{linprog} 求解；若使用二元变量，则使用 \texttt{intlinprog} 或 Gurobi/CPLEX 等商用求解器。
-  \item 参数建议：取 $\eta_{\mathrm{c}}=\eta_{\mathrm{d}}=\sqrt{0.9}$，$\Delta=\frac{1}{6}$ h。
-  \item 输出格式：按题目要求保存 \texttt{result1.xlsx}（计划购电量、充放电量/SoC）与 \texttt{result2.xlsx}（含紧急购电记录）；绘图建议包括时序图（负荷、光伏、网购/紧急购电）和 SoC 曲线。
-  \item 不确定性处理：若需在规划阶段显式考虑光伏/负荷不确定性，可将方法 A 扩展为两阶段随机规划（场景法）或用鲁棒优化；这会显著增加建模与求解复杂度，但可改善风险暴露。
+  \item MATLAB 实现：将方法 A 写为 LP 并调用 \texttt{linprog}；方法 B 在问题1 解的基础上编写逐时仿真脚本计算 $G^{d,\mathrm{act}},G^{e,\mathrm{act}}$ 与最终成本。
+  \item 输出文件：生成 result1.xlsx（计划购电与储能调度）、result2.xlsx（问题2 的折扣购电与紧急购电记录与费用明细），并绘制时序图（负荷、PV、各类购电与 SoC）。
+  \item 建议对关键参数（$G^{d,\max}$、折扣率、紧急价格倍数、$E_{\max}$）做敏感性分析以展示稳健性。
 \end{itemize}
 
-% End of model_section.tex
-
-ewline
-
-oindent% Note: To convert this .tex into a Word .docx with equations, you can use Pandoc:
-%    pandoc model_section.tex -s -o model_section.docx
-% Pandoc will convert LaTeX math to Word equations (ensure Pandoc is installed).
-
-ewline
-
-oindent
-	extbf{生成说明：} 将该文件保存为 \texttt{model_section.tex}，使用 Pandoc 命令将其转换为 Word（若需我代为生成 .docx，请授权并告知是否将文件提交到您的仓库）。
-
-ewline
-
-oindent
-	extbf{完}
-
-ewline
-
-ewline
-
-oindent
-	extit{(文件自动生成于仓库： lu123-maker/my-first-work ，文件名： model_section.tex)}
-
-ewline
-
-oindent
-	extit{如需我把 .docx 也生成并提交，请回复“请生成 docx 并提交”并确认我可以在仓库写入结果文件。}
-
-ewline
-
-oindent
-	extit{结束}
-
-ewline
-
-ewline
-
-oindent
-	extbf{备注：} 如果你要我现在也把 model_section.docx 放到仓库里，请确认并我会用 Pandoc 在我的环境中生成并提交；若不授权写入，我会把 .tex 给你下载并教你一行命令生成 .docx。
-
-ewline
-
-oindent
-	extbf{---}
-
-ewline
-
-oindent
-	extit{需要我现在把 .docx 也生成并提交到仓库吗？}
-
-ewline
-
-oindent
-	extit{（回复：是 / 否）}
-
-ewline
-
-oindent
-	extit{如果“是”，请再次确认仓库： lu123-maker/my-first-work，分支：默认提交到默认分支。}
-
-ewline
-
-oindent
-	extit{如果你希望我把 .docx 直接发给你而不是提交仓库，请说明接收方式（例如通过这里上传）。}
-
-ewline
-
-oindent
-	extit{完}
-
-ewline
-
-oindent
-	extbf{谢谢！}
-
-ewline
-
-oindent
-	extbf{-- End of LaTeX file --}
-
-ewline
-
-oindent
-	extit{(If you want further modifications to wording or formatting for your paper template, tell me your template class and I'll adapt.)}
-
-ewline
-
-oindent
-	extit{}
-
-ewline
-
-oindent
-	extit{}
-
-ewline
+\end{document}
